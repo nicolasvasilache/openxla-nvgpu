@@ -165,9 +165,10 @@ struct TransformPreprocessingSession
     : public PluginSession<TransformPreprocessingSession,
                            TransformPreprocessingOptions> {
   void extendPreprocessingPassPipeline(OpPassManager &pm) override {
-    if (!options.preprocessingTransformFileName.empty())
+    if (!options.preprocessingTransformFileName.empty()) {
       pm.addPass(iree_compiler::createTransformDialectInterpreterPass(
           options.preprocessingTransformFileName));
+    }
   }
 };
 
