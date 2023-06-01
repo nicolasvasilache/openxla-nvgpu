@@ -36,19 +36,19 @@ transform.sequence failures(propagate) {
   ^bb1(%variant_op: !transform.any_op):
     transform.print %variant_op : !transform.any_op
 
-    // // Step 1. Convert pack/unpack to pad/extract_slice.
+    // Step 1. Convert pack/unpack to pad/extract_slice.
     // Do not apply this for pad ops.
-    // %pack = transform.structured.match ops{["tensor.pack"]} in %variant_op
-    //   : (!transform.any_op) -> !transform.op<"tensor.pack">
-    // transform.structured.lower_pack %pack : (!transform.op<"tensor.pack">)
-    //   -> (!transform.op<"tensor.pad">, !transform.op<"tensor.expand_shape">,
-    //       !transform.op<"linalg.transpose">)
-    // transform.print %variant_op {name = "after conversion to pad"} : !transform.any_op
+    %pack = transform.structured.match ops{["tensor.pack"]} in %variant_op
+      : (!transform.any_op) -> !transform.op<"tensor.pack">
+    transform.structured.lower_pack %pack : (!transform.op<"tensor.pack">)
+      -> (!transform.op<"tensor.pad">, !transform.op<"tensor.expand_shape">,
+          !transform.op<"linalg.transpose">)
+    transform.print %variant_op {name = "after conversion to pad"} : !transform.any_op
 
-    // // The insert_slice is now visible, fold the flow.tensor.store away with it.
-    // transform.iree.apply_patterns %variant_op {fold_flow}
-    //   : (!transform.any_op) -> ()
-    // transform.print %variant_op {name = "after flow folding"} : !transform.any_op
+    // The insert_slice is now visible, fold the flow.tensor.store away with it.
+    transform.iree.apply_patterns %variant_op {fold_flow}
+      : (!transform.any_op) -> ()
+    transform.print %variant_op {name = "after flow folding"} : !transform.any_op
 
     // Step 2. Tile and distribute to blocks.
     // ======================================

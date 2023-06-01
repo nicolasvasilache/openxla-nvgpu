@@ -34,33 +34,22 @@ transform.sequence failures(propagate) {
 
   %packed_matmul = transform.structured.pack_greedily %matmul 
       matmul_packed_sizes = [0, 0, 0] 
-      matmul_padded_sizes_next_multiple_of = [128, 128, 3456] // 3456 = 54 * 32
-      // We want [0, 2, 1] to get back to a mn, mk, kn ordering.
-      // Otherwise we'd get mn, mk, nk.
-      matmul_inner_dims_order = [0, 2, 1]
+      matmul_padded_sizes_next_multiple_of = [128, 128, 1728] // 1728 = 54 * 32
+      matmul_inner_dims_order = [0, 1, 2]
     : (!transform.any_op) -> !transform.op<"linalg.generic">
+
   transform.print %func {name = "after pack_greedily"} : !transform.any_op
 
   // Need to apply rank-reducing patterns so that split_reduction only sees a single
   // reduction dimension.
   transform.iree.apply_patterns %module_op {rank_reducing_linalg} : (!transform.any_op) -> ()
-  %1:4 = transform.structured.split_reduction %packed_matmul 
-    { split_factor = 54, insert_split_dimension = 2 } 
+
+  %1:4 = transform.structured.split_reduction %packed_matmul
+    { split_factor = 54 }
       : (!transform.op<"linalg.generic">) -> (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
 
-  transform.print %func {name = "after split_reduction"} : !transform.any_op
-  transform.structured.interchange %1#2 iterator_interchange = [2, 0, 1, 3]
-    : (!transform.any_op) -> !transform.any_op
-  transform.print %func {name = "after interchange"} : !transform.any_op
-
-
-  // Step 2. Special pack / unpack lowering.
-  // ==================================================================
-  // To easily make tensor.unpack a noop, rewrite pack/unpack at the graph level.
-  // This requires calling iree-compile with --iree-flow-enable-pad-handling.
-  //
-  // We can also make this part of a pack/unpack codegen strategy but for now it
-  // is easier to get off the ground with graph-level manipulations
+  // Step 2. Pack / unpack lowering.
+  // ===============================
   %pack = transform.structured.match ops{["tensor.pack"]} in %module_op
     : (!transform.any_op) -> !transform.op<"tensor.pack">
   transform.structured.lower_pack %pack : (!transform.op<"tensor.pack">) 
@@ -72,11 +61,14 @@ transform.sequence failures(propagate) {
         !transform.op<"linalg.transpose">,
         !transform.op<"tensor.collapse_shape">,
         !transform.op<"tensor.extract_slice">)
-  
-  transform.iree.apply_patterns %func { rank_reducing_linalg_via_reshapes } : (!transform.any_op) -> ()
-  transform.iree.apply_patterns %func { fold_tensor_subsets } : (!transform.any_op) -> ()
-  transform.iree.apply_patterns %func { canonicalization, cse } : (!transform.any_op) -> ()
 
-  transform.print %func {name = "after preprocessing"} : !transform.any_op
-
+  // Without generalize, the linalg.transpose named op triggers bad fusion
+  // heuristics that result in very expensive tranpose kernels.
+  // With transform.structured.generalize, the overhead is "only" ~25%.
+  %generic = transform.structured.match interface{LinalgOp} in %module_op
+    : (!transform.any_op) -> !transform.any_op
+  transform.structured.generalize %generic 
+    : (!transform.any_op) -> !transform.any_op
+  transform.iree.apply_patterns %func { canonicalization, cse } 
+    : (!transform.any_op) -> ()
 }
